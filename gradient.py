@@ -199,9 +199,33 @@ def wgradient_iiac(X,c,measurements):
             Lambda_i[rows[k_i],cols[k_i]] *= g_i[k_i].conj()
         gx += Lambda_i * e_i
     # In form x,y on xconj, yconj
-    wgrad = np.hstack([gx.conj() @ X.conj(), gx @ X])
-    sci_grad = np.hstack([(wgrad[:M] + wgrad[M:]),(wgrad[:M] - wgrad[M:])*-1j])
+    wgrad = np.hstack([gx.conj() @ X.conj(), gx @ X]) / measurements.shape[0]
+    sci_grad = np.hstack([(wgrad[:M] + wgrad[M:]),(wgrad[:M] - wgrad[M:])*-1j]) / 2
     return np.real(sci_grad)
+#}}}
+#{{{ wgradient_iiac_test(X,c,measurements)
+def wgradient_iiac_test(X,c,measurements):
+    M = len(X)
+    k = np.arange(-M+1,M)
+    l = 1 - np.min(np.vstack([np.zeros(M+M-1), k]),axis=0)
+    u = np.min(np.vstack([np.ones_like(k) * M, np.ones_like(k) * M - k]),axis=0)
+    u = (u-1).astype(int)
+    l = (l-1).astype(int)
+    rows = [M - 1 - np.arange(l[i],u[i]+1) for i in range(len(k))]
+    cols = [np.arange(l[i],u[i]+1) + k[i] for i in range(len(k))]
+    gx = np.zeros([M,M],dtype=complex)
+    gxc = np.zeros([M,M],dtype=complex)
+    for i in range(measurements.shape[0]):
+        g_i = np.convolve(X*c[i,:], X*c[i,:],mode='full')
+        H_i = np.sum(np.abs(g_i)**2)
+        Lambda_i    = np.outer(c[i,:], c[i,:])
+        e_i = (H_i - measurements[i])
+        for k_i in range(len(k)):
+            Lambda_i[rows[k_i],cols[k_i]] *= g_i[k_i].conj()
+        gx += Lambda_i * e_i
+    # In form x,y on xconj, yconj
+    wgrad = np.hstack([gx.conj() @ X.conj(), gx @ X]) / measurements.shape[0]
+    return wgrad
 #}}}
 #{{{ whess(X,Y,c,d,measurements)
 def whess(X,Y,c,d,measurements):
@@ -936,7 +960,7 @@ def test_iiac_grad():
     plt.show()
     noise = np.random.randn(I)**2 
     noise/=np.linalg.norm(noise)/np.linalg.norm(measurements)
-    measurements += noise * 1e-2
+    measurements += noise * 1e-4
     H = np.hstack([np.real(x),np.imag(x)]).flatten()
 
     X = np.ones_like(x)
@@ -946,7 +970,7 @@ def test_iiac_grad():
 
     result = minimize(scipy_cost_iiac, H, [c,measurements], jac=scipy_grad_iiac,\
             method='L-BFGS-B', \
-            options = dict(disp = True,maxfun = 500,ftol=1e-12,gtol=1e-12))
+            options = dict(disp = True,maxfun = 500,ftol=1e-4,gtol=1e-4))
     print(result)
     X = result.x[:M] + 1j*result.x[M:]
 
@@ -968,6 +992,52 @@ def test_iiac_grad():
 
 #}}}
 
+def test_all_grads():
+    ## IIAC
+    M = 16
+    I = 128
+    X,c,y = MEAS.generate_complex_uniform_IIAC(M,I)
+    pert = X + (np.random.randn(M) + np.random.randn(M) * 1j) * 1e-0
+    ripert = np.vstack([np.real(pert),np.imag(pert)]).flatten()
+
+    grad = wgradient_iiac_test(pert,c,y)
+    sgrad = scipy_grad_iiac(ripert,[c,y])
+
+    Tx = np.vstack([np.hstack([np.eye(M), 1j * np.eye(M)]),\
+                    np.hstack([np.eye(M),-1j*np.eye(M)])])
+
+
+    grad_cx = (Tx @ sgrad).flatten() 
+    grad = grad.flatten()
+    grad_ri = (Tx.T.conj() @ grad).flatten()/2
+    print(np.linalg.norm( grad - grad_cx))
+    print(np.linalg.norm( grad_ri - sgrad.flatten()))
+
+    plt.subplot(2,1,1)
+    plt.plot(np.real(grad))
+    plt.plot(np.real(grad_cx))
+    plt.subplot(2,1,2)
+    plt.plot(np.imag(grad))
+    plt.plot(np.imag(grad_cx))
+    plt.show()
+
+    #hess = whess(pert,y,A)
+
+    #shess = scipy_whess(ripert,y,A)
+
+    #Tx = np.vstack([np.hstack([np.eye(N), 1j * np.eye(N)]),\
+    #                np.hstack([np.eye(N),-1j*np.eye(N)])])
+
+    #grad_cx = (Tx @ sgrad).flatten()
+    #grad = grad.flatten()
+    #grad_ri = (Tx.T.conj() @ grad).flatten()/2
+    #print(np.linalg.norm( grad - grad_cx))
+    #print(np.linalg.norm( grad_ri - sgrad.flatten()))
+
+    #hess_cx = Tx @ shess @ Tx.T.conj()
+    #hess_ri = Tx.T.conj() @ hess @ Tx  / 4
+    #print(np.linalg.norm(hess - hess_cx))
+    #print(np.linalg.norm(shess - hess_ri))
 
 if __name__ == '__main__':
     #test_grad()
@@ -975,4 +1045,5 @@ if __name__ == '__main__':
     #test_iicc_grad()
     #test_iicc_hess()
     test_iiac_grad()
+    #test_all_grads()
 
